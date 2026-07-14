@@ -741,6 +741,238 @@ export async function refreshQuotesHandler(req: HttpRequest, res: HttpResponse) 
   res.json({ quotes, failures, fxRates, asOf: nowStr });
 }
 
+// ---------------------------------------------------------------------------
+// Backtest: replay a portfolio against real historical prices & dividends
+// ---------------------------------------------------------------------------
+interface MonthlySeries {
+  months: string[];                    // "YYYY-MM", ascending
+  close: Map<string, number>;          // month → closing price (native currency)
+  dividends: Map<string, number>;      // month → dividend per share (native currency)
+  firstMonth: string;
+}
+
+function monthKey(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+
+/**
+ * Yahoo의 월봉 데이터에는 간헐적으로 손상된 행이 섞인다 (예: KRW=X의 첫 행이
+ * 1,120원이 아닌 0.11로 내려옴). 직전(없으면 직후) 정상값 대비 6배 이상
+ * 점프하는 값을 이상치로 판정해 제거하고, 빈 구간은 이웃 값으로 채운다.
+ */
+function sanitizeCloseSeries(series: MonthlySeries, maxJump = 6) {
+  const entries = series.months
+    .map(m => ({ m, v: series.close.get(m) }))
+    .filter((e): e is { m: string; v: number } => typeof e.v === "number" && e.v > 0);
+  let last: number | null = null;
+  for (let i = 0; i < entries.length; i++) {
+    const { m, v } = entries[i];
+    const ref = last ?? entries[i + 1]?.v ?? v;
+    if (v > ref * maxJump || v < ref / maxJump) {
+      series.close.delete(m);
+    } else {
+      last = v;
+    }
+  }
+  // forward-fill gaps, then backfill any leading gap with the first valid value
+  let carry: number | undefined;
+  let firstValid: number | undefined;
+  for (const m of series.months) {
+    const v = series.close.get(m);
+    if (v !== undefined) {
+      carry = v;
+      if (firstValid === undefined) firstValid = v;
+    } else if (carry !== undefined) {
+      series.close.set(m, carry);
+    }
+  }
+  for (const m of series.months) {
+    if (series.close.get(m) === undefined && firstValid !== undefined) series.close.set(m, firstValid);
+    else break;
+  }
+}
+
+async function getMonthlySeries(symbol: string, period1: string): Promise<MonthlySeries> {
+  const chart = await yf.chart(symbol, { period1, interval: "1mo", events: "div" });
+  const close = new Map<string, number>();
+  const months: string[] = [];
+  for (const q of chart.quotes ?? []) {
+    if (!q.date || typeof q.close !== "number" || q.close <= 0) continue;
+    const key = monthKey(q.date instanceof Date ? q.date : new Date(q.date));
+    if (!close.has(key)) months.push(key);
+    close.set(key, q.close);
+  }
+  const dividends = new Map<string, number>();
+  for (const ev of (chart.events?.dividends ?? []) as any[]) {
+    const d = ev.date instanceof Date ? ev.date : new Date(ev.date);
+    const key = monthKey(d);
+    dividends.set(key, (dividends.get(key) ?? 0) + ev.amount);
+  }
+  if (months.length === 0) throw new Error(`No price history for ${symbol}`);
+  const series: MonthlySeries = { months, close, dividends, firstMonth: months[0] };
+  sanitizeCloseSeries(series);
+  return series;
+}
+
+/** POST /api/backtest — DCA + DRIP simulation on real historical data */
+export async function backtestHandler(req: HttpRequest, res: HttpResponse) {
+  if (req.method && req.method !== "POST") {
+    return res.status(405).json({ error: "POST 요청만 지원합니다." });
+  }
+  const {
+    holdings,            // [{ ticker, currency, weight }] — weight: 0~1, 합계 1
+    years = 10,          // 백테스트 기간 (년)
+    initialCapital = 0,  // KRW
+    monthlyContribution = 0, // KRW
+    reinvestDividends = true,
+    taxByCurrency = true // 통화별 원천징수(한국 15.4% / 그 외 15%)
+  } = req.body ?? {};
+
+  if (!Array.isArray(holdings) || holdings.length === 0 || holdings.length > 20) {
+    return res.status(400).json({ error: "holdings 배열(1~20개)이 필요합니다." });
+  }
+  const yearsClamped = Math.min(30, Math.max(1, Number(years) || 10));
+
+  try {
+    // Fetch monthly price/dividend series for every holding + USD/KRW history
+    const period1Date = new Date();
+    period1Date.setFullYear(period1Date.getFullYear() - yearsClamped);
+    period1Date.setDate(1);
+    const period1 = period1Date.toISOString().split("T")[0];
+
+    const resolved = await Promise.all(
+      holdings.map(async (h: any) => {
+        const symbol = await resolveSymbol(String(h.ticker), h.currency);
+        if (!symbol) throw new Error(`'${h.ticker}' 종목을 찾을 수 없습니다.`);
+        const series = await getMonthlySeries(symbol, period1);
+        const quote = await getMarketSnapshot(symbol);
+        return {
+          ticker: String(h.ticker),
+          currency: quote.currency,
+          weight: Math.max(0, Number(h.weight) || 0),
+          series
+        };
+      })
+    );
+
+    const totalWeight = resolved.reduce((a, r) => a + r.weight, 0);
+    if (totalWeight <= 0) {
+      return res.status(400).json({ error: "종목 비중(weight) 합계가 0입니다." });
+    }
+    resolved.forEach(r => { r.weight = r.weight / totalWeight; });
+
+    const needsUsdFx = resolved.some(r => r.currency !== "KRW");
+    const fxSeries = needsUsdFx ? await getMonthlySeries("KRW=X", period1) : null;
+    const currentFx = await getFxRates();
+
+    // Common simulation window: start where every holding (and FX) has data
+    const notes: string[] = [];
+    let startMonth = period1.slice(0, 7);
+    for (const r of resolved) {
+      if (r.series.firstMonth > startMonth) {
+        startMonth = r.series.firstMonth;
+        notes.push(`${r.ticker}의 가격 데이터가 ${r.series.firstMonth}부터 존재하여 백테스트 시작점을 조정했습니다.`);
+      }
+    }
+    const baseMonths = resolved[0].series.months.filter(m => m >= startMonth);
+    if (baseMonths.length < 12) {
+      return res.status(400).json({ error: "공통 데이터 구간이 12개월 미만이라 백테스트할 수 없습니다." });
+    }
+
+    // Convert a native-currency amount to KRW at month m (fallback: latest rate)
+    let lastFx = 0;
+    const fxAt = (m: string, currency: string): number => {
+      if (currency === "KRW") return 1;
+      if (currency === "USD" && fxSeries) {
+        const v = fxSeries.close.get(m);
+        if (v && v > 0) { lastFx = v; return v; }
+        if (lastFx > 0) return lastFx;
+      }
+      return (currentFx as any)[currency] ?? currentFx.USD;
+    };
+    const taxRateOf = (currency: string) => (taxByCurrency ? (currency === "KRW" ? 0.154 : 0.15) : 0);
+
+    // State
+    const shares: number[] = resolved.map(() => 0);
+    const lastPrice: number[] = resolved.map(() => 0);
+    let totalContributions = 0;
+    let cumNetDividends = 0;
+    const series: { month: string; value: number; contributions: number; cumDividends: number }[] = [];
+
+    baseMonths.forEach((m, idx) => {
+      // 1. Contribution: initial capital on month 0, then monthly DCA — buy by weight
+      const cash = (idx === 0 ? Number(initialCapital) || 0 : 0) + (Number(monthlyContribution) || 0);
+      totalContributions += cash;
+
+      resolved.forEach((r, i) => {
+        const px = r.series.close.get(m) ?? lastPrice[i];
+        if (px > 0) lastPrice[i] = px;
+        const pxKRW = px * fxAt(m, r.currency);
+        if (cash > 0 && pxKRW > 0) {
+          shares[i] += (cash * r.weight) / pxKRW;
+        }
+        // 2. Dividends this month (per share, native) → net cash → optional DRIP
+        const dps = r.series.dividends.get(m) ?? 0;
+        if (dps > 0 && shares[i] > 0) {
+          const gross = dps * shares[i] * fxAt(m, r.currency);
+          const net = gross * (1 - taxRateOf(r.currency));
+          cumNetDividends += net;
+          if (reinvestDividends && pxKRW > 0) {
+            shares[i] += net / pxKRW;
+          }
+        }
+      });
+
+      // 3. Mark-to-market portfolio value in KRW
+      let value = 0;
+      resolved.forEach((r, i) => {
+        const px = r.series.close.get(m) ?? lastPrice[i];
+        value += shares[i] * px * fxAt(m, r.currency);
+      });
+      if (!reinvestDividends) value += cumNetDividends; // 배당을 현금으로 보유
+
+      series.push({
+        month: m,
+        value: Math.round(value),
+        contributions: Math.round(totalContributions),
+        cumDividends: Math.round(cumNetDividends)
+      });
+    });
+
+    const finalPoint = series[series.length - 1];
+    const yearsActual = series.length / 12;
+    const finalValue = finalPoint.value;
+    const cagr = totalContributions > 0 && yearsActual > 0.5
+      ? Math.pow(finalValue / totalContributions, 1 / yearsActual) - 1 // 납입 시점을 무시한 근사치
+      : 0;
+
+    res.json({
+      startMonth,
+      endMonth: finalPoint.month,
+      notes,
+      series: series.filter((_, i) => i % 3 === 0 || i === series.length - 1), // 분기 간격으로 응답 축소
+      summary: {
+        finalValue,
+        totalContributions: finalPoint.contributions,
+        totalNetDividends: finalPoint.cumDividends,
+        totalGain: finalValue - finalPoint.contributions,
+        totalReturnPct: finalPoint.contributions > 0 ? finalValue / finalPoint.contributions - 1 : 0,
+        approxCagr: Math.round(cagr * 10000) / 10000,
+        yearsActual: Math.round(yearsActual * 10) / 10
+      },
+      holdings: resolved.map((r, i) => ({
+        ticker: r.ticker,
+        weight: Math.round(r.weight * 1000) / 1000,
+        finalShares: Math.round(shares[i] * 100) / 100,
+        finalValueKRW: Math.round(shares[i] * lastPrice[i] * fxAt(finalPoint.month, r.currency))
+      })),
+      assumptions: "월초 종가 일괄 매수, 배당은 배당락월에 수령·재투자, 원천징수 차감(한국 15.4%/해외 15%), 수수료·슬리피지 미반영"
+    });
+  } catch (error: any) {
+    res.status(502).json({ error: error.message || "백테스트 데이터를 가져오지 못했습니다." });
+  }
+}
+
 /** POST /api/analyze-stock — real numbers from Yahoo, commentary from Gemini */
 export async function analyzeStockHandler(req: HttpRequest, res: HttpResponse) {
   if (req.method && req.method !== "POST") {

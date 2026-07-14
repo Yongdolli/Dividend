@@ -47,6 +47,35 @@ cp .env.example .env.local
 
 `render.yaml`도 포함되어 있어 Render로도 배포할 수 있습니다. 단, 무료 티어는 15분 미사용 시 잠들었다 깨어나는 지연이 있습니다.
 
+## 주요 기능 (v2.1)
+
+- **실전 포트폴리오 트래커**: 매수 평단가 입력 → 평가손익, 실측 Yield on Cost
+- **실데이터 백테스트**: 과거 실제 주가·배당·환율로 적립식+배당재투자(DRIP) 재현 (최대 20년)
+- **은퇴 설계**: 목표 세후 월배당 → 필요 월 적립액 역산 + 은퇴 후 30년 인출기 시뮬레이션
+- **클라우드 저장** (선택): 이메일 매직링크 로그인으로 폰↔PC 포트폴리오 동기화
+
+## 클라우드 저장 활성화 (선택)
+
+Supabase 무료 티어를 사용합니다. 미설정 시 이 기능만 숨겨지고 나머지는 정상 동작합니다.
+
+1. [supabase.com](https://supabase.com) 가입 → **New Project** 생성 (무료)
+2. 프로젝트의 **SQL Editor**에서 아래 SQL 실행 (테이블 + 보안 정책 생성):
+   ```sql
+   create table public.portfolios (
+     user_id uuid primary key references auth.users(id) on delete cascade,
+     data jsonb not null,
+     updated_at timestamptz not null default now()
+   );
+   alter table public.portfolios enable row level security;
+   create policy "own row" on public.portfolios for all
+     using (auth.uid() = user_id) with check (auth.uid() = user_id);
+   ```
+3. **Project Settings → API** 에서 `Project URL`과 `anon public` 키 복사
+4. Vercel 프로젝트 **Settings → Environment Variables** 에 추가 후 재배포:
+   - `VITE_SUPABASE_URL` = Project URL
+   - `VITE_SUPABASE_ANON_KEY` = anon public 키
+5. (로컬에서 쓰려면 `.env.local`에도 동일하게 추가)
+
 ## API 엔드포인트
 
 | 엔드포인트 | 설명 |
@@ -55,6 +84,7 @@ cp .env.example .env.local
 | `GET /api/sync-recs` | 추천 종목 보드 (실시간 시세 병합, 10분 캐시, `?force=true`로 강제 갱신) |
 | `POST /api/refresh-quotes` | 보유 종목 일괄 시세 갱신 `{ holdings: [{ticker, currency}] }` |
 | `POST /api/analyze-stock` | 종목 분석 `{ ticker, country }` — 티커·6자리 코드·한글명 지원 |
+| `POST /api/backtest` | 과거 실데이터 백테스트 `{ holdings, years, initialCapital, monthlyContribution, reinvestDividends }` |
 
 ## 데이터 출처와 한계
 

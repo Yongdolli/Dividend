@@ -64,6 +64,7 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
     ticker: "",
     name: "",
     currentPrice: "",
+    purchasePrice: "",
     currency: "USD",
     dividendYield: "",
     dividendGrowthRate: "",
@@ -72,9 +73,21 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
   });
 
   // Calculate weighted average metrics
-  const { totalValueKRW, totalAnnualDividendKRW, weightedYield, weightedGrowthRate, weightedTaxRate } = useMemo(() => {
+  const {
+    totalValueKRW, totalCostKRW, totalGainKRW, totalGainPct,
+    totalAnnualDividendKRW, weightedYield, weightedYieldOnCost,
+    weightedGrowthRate, weightedTaxRate
+  } = useMemo(() => {
     return calculatePortfolioMetrics(stocks);
   }, [stocks]);
+
+  const hasCostBasis = useMemo(() => stocks.some(s => s.purchasePrice && s.purchasePrice > 0), [stocks]);
+
+  const handlePurchasePriceChange = (id: string, value: number) => {
+    setStocks(prev => prev.map(stock =>
+      stock.id === id ? { ...stock, purchasePrice: Math.max(0, value) || undefined } : stock
+    ));
+  };
 
   // Calculate monthly payout calendar
   const monthlyCalendar = useMemo(() => {
@@ -107,6 +120,7 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
     }
 
     const price = parseFloat(newStock.currentPrice);
+    const purchase = parseFloat(newStock.purchasePrice || "0");
     const divYield = parseFloat(newStock.dividendYield) / 100;
     const growth = parseFloat(newStock.dividendGrowthRate || "0") / 100;
     const shares = parseFloat(newStock.sharesOwned || "0");
@@ -116,6 +130,7 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
       ticker: newStock.ticker.toUpperCase(),
       name: newStock.name,
       currentPrice: price,
+      purchasePrice: purchase > 0 ? purchase : undefined,
       currency: newStock.currency,
       dividendYield: divYield,
       payoutRatio: 0.5, // default
@@ -136,6 +151,7 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
       ticker: "",
       name: "",
       currentPrice: "",
+      purchasePrice: "",
       currency: "USD",
       dividendYield: "",
       dividendGrowthRate: "",
@@ -164,9 +180,15 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
         <div className="bg-slate-900 text-white rounded-2xl p-5 shadow-xs border border-slate-800">
           <span className="text-slate-400 text-xs font-semibold block">총 포트폴리오 평가액</span>
           <span className="text-2xl font-bold mt-1 block font-sans">{formatCurrency(totalValueKRW)}</span>
-          <span className="text-slate-400 text-[11px] mt-1 block font-mono">
-            {stocks.filter(s => s.currency === "USD").length > 0 && `(실시간 환율 ₩${Math.round(getFxRate("USD")).toLocaleString()}/$ 적용)`}
-          </span>
+          {hasCostBasis ? (
+            <span className={`text-[11px] mt-1 block font-mono font-bold ${totalGainKRW >= 0 ? "text-emerald-400" : "text-rose-400"}`}>
+              평가손익 {totalGainKRW >= 0 ? "+" : ""}{formatCurrency(totalGainKRW)} ({totalGainPct >= 0 ? "+" : ""}{(totalGainPct * 100).toFixed(1)}%)
+            </span>
+          ) : (
+            <span className="text-slate-400 text-[11px] mt-1 block font-mono">
+              {stocks.filter(s => s.currency === "USD").length > 0 && `(실시간 환율 ₩${Math.round(getFxRate("USD")).toLocaleString()}/$ 적용)`}
+            </span>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-xs">
@@ -181,7 +203,9 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
           <span className="text-slate-400 text-xs font-semibold block">평균 가중 배당수익률</span>
           <span className="text-2xl font-bold text-indigo-600 mt-1 block font-sans">{(weightedYield * 100).toFixed(2)}%</span>
           <span className="text-slate-500 text-xs mt-1 block">
-            전체 자산 대비 배당 생산성
+            {hasCostBasis
+              ? <>내 매수가 기준 <strong className="text-emerald-600">YOC {(weightedYieldOnCost * 100).toFixed(2)}%</strong></>
+              : "전체 자산 대비 배당 생산성"}
           </span>
         </div>
 
@@ -259,6 +283,17 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
                     placeholder="예: 420.5"
                     value={newStock.currentPrice}
                     onChange={(e) => setNewStock(prev => ({ ...prev, currentPrice: e.target.value }))}
+                    className="w-full text-xs border border-slate-200 rounded-md p-1.5 bg-white"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-[10px] text-slate-500">매수 평단가 (선택)</label>
+                  <input
+                    type="number"
+                    step="0.01"
+                    placeholder="미입력 시 현재가"
+                    value={newStock.purchasePrice}
+                    onChange={(e) => setNewStock(prev => ({ ...prev, purchasePrice: e.target.value }))}
                     className="w-full text-xs border border-slate-200 rounded-md p-1.5 bg-white"
                   />
                 </div>
@@ -350,10 +385,14 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
                 const priceFormatted = isUSD ? `$${stock.currentPrice.toLocaleString()}` : `${stock.currentPrice.toLocaleString()}원`;
                 const valueKRW = stock.sharesOwned * toKRW(stock.currentPrice, stock.currency);
                 const weight = totalValueKRW > 0 ? (valueKRW / totalValueKRW) * 100 : 0;
-                
+                // 실전 트래커 지표: 평단가 기준 손익률과 실측 YOC
+                const hasCost = !!(stock.purchasePrice && stock.purchasePrice > 0);
+                const gainPct = hasCost ? (stock.currentPrice - stock.purchasePrice!) / stock.purchasePrice! : 0;
+                const yoc = hasCost ? (stock.currentPrice * stock.dividendYield) / stock.purchasePrice! : 0;
+
                 return (
-                  <div 
-                    key={stock.id} 
+                  <div
+                    key={stock.id}
                     className="border border-slate-100 rounded-xl p-4 hover:bg-slate-50/50 transition-all flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4"
                   >
                     <div className="space-y-1 flex-1">
@@ -362,20 +401,41 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
                           {stock.ticker}
                         </span>
                         <h4 className="font-semibold text-slate-800 text-sm line-clamp-1">{stock.name}</h4>
+                        {hasCost && (
+                          <span className={`text-[10px] font-bold font-mono px-1.5 py-0.5 rounded-md border ${gainPct >= 0 ? "text-emerald-700 bg-emerald-50 border-emerald-100" : "text-rose-700 bg-rose-50 border-rose-100"}`}>
+                            {gainPct >= 0 ? "+" : ""}{(gainPct * 100).toFixed(1)}%
+                          </span>
+                        )}
                       </div>
-                      
+
                       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-slate-500 font-medium">
                         <span>현재가: <strong className="text-slate-700">{priceFormatted}</strong></span>
                         <span>배당률: <strong className="text-indigo-600">{(stock.dividendYield * 100).toFixed(2)}%</strong></span>
+                        {hasCost && (
+                          <span>내 YOC: <strong className="text-emerald-600">{(yoc * 100).toFixed(2)}%</strong></span>
+                        )}
                         <span>지급 주기: <strong className="text-slate-600">{stock.payoutFrequency === "Monthly" ? "매월" : stock.payoutFrequency === "Quarterly" ? "분기" : stock.payoutFrequency === "Semi-Annually" ? "반기" : "매년"}</strong></span>
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-6 w-full sm:w-auto justify-between sm:justify-end">
+                    <div className="flex items-center gap-4 w-full sm:w-auto justify-between sm:justify-end flex-wrap">
                       {/* Weight badge */}
                       <div className="text-right">
                         <span className="text-[10px] text-slate-400 font-bold block uppercase">비중</span>
                         <span className="text-xs font-bold text-slate-700 font-mono">{weight.toFixed(1)}%</span>
+                      </div>
+
+                      {/* Purchase price (cost basis) input */}
+                      <div className="text-right">
+                        <span className="text-[10px] text-slate-400 font-bold block uppercase">평단가 ({isUSD ? "$" : "₩"})</span>
+                        <input
+                          type="number"
+                          step="any"
+                          placeholder={String(stock.currentPrice)}
+                          value={stock.purchasePrice ?? ""}
+                          onChange={(e) => handlePurchasePriceChange(stock.id, parseFloat(e.target.value) || 0)}
+                          className="w-24 h-7 text-right px-2 text-xs font-bold border border-slate-200 rounded-lg"
+                        />
                       </div>
 
                       {/* Shares input counter */}

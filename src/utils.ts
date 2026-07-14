@@ -159,12 +159,16 @@ export function calculateCompounding(
  */
 export function calculatePortfolioMetrics(stocks: Stock[]) {
   let totalValueKRW = 0;
+  let totalCostKRW = 0;
   let totalAnnualDividendKRW = 0;
   let totalAnnualDividendTaxKRW = 0;
 
   stocks.forEach(stock => {
     const stockValueKRW = stock.sharesOwned * toKRW(stock.currentPrice, stock.currency);
     totalValueKRW += stockValueKRW;
+    // 평단가 미입력 종목은 현재가 매수로 간주 (손익 0)
+    const costPerShare = stock.purchasePrice && stock.purchasePrice > 0 ? stock.purchasePrice : stock.currentPrice;
+    totalCostKRW += stock.sharesOwned * toKRW(costPerShare, stock.currency);
 
     const stockAnnualDividendKRW = stockValueKRW * stock.dividendYield;
     totalAnnualDividendKRW += stockAnnualDividendKRW;
@@ -172,6 +176,10 @@ export function calculatePortfolioMetrics(stocks: Stock[]) {
   });
 
   const weightedYield = totalValueKRW > 0 ? totalAnnualDividendKRW / totalValueKRW : 0;
+  const totalGainKRW = totalValueKRW - totalCostKRW;
+  const totalGainPct = totalCostKRW > 0 ? totalGainKRW / totalCostKRW : 0;
+  // 실측 Yield on Cost: 연간 배당금 ÷ 실제 매수원금
+  const weightedYieldOnCost = totalCostKRW > 0 ? totalAnnualDividendKRW / totalCostKRW : 0;
   // Dividend-weighted effective withholding tax rate (KR 15.4%, US 15%)
   const weightedTaxRate = totalAnnualDividendKRW > 0
     ? totalAnnualDividendTaxKRW / totalAnnualDividendKRW
@@ -192,11 +200,85 @@ export function calculatePortfolioMetrics(stocks: Stock[]) {
 
   return {
     totalValueKRW,
+    totalCostKRW,
+    totalGainKRW,
+    totalGainPct,
     totalAnnualDividendKRW,
     weightedYield,
+    weightedYieldOnCost,
     weightedTaxRate,
     weightedGrowthRate: totalWeight > 0 ? weightedGrowthRate : 0
   };
+}
+
+/**
+ * 목표 역산: N년 뒤 세후 월배당 목표를 달성하는 데 필요한 월 적립액을
+ * 기존 복리 시뮬레이션을 이진 탐색으로 돌려 찾는다. 도달 불가능하면 null.
+ */
+export function solveRequiredMonthlyContribution(
+  config: SimulationConfig,
+  portfolioYield: number,
+  portfolioDividendGrowth: number,
+  portfolioPriceGrowth: number,
+  targetNetMonthly: number,
+  years: number
+): number | null {
+  const netMonthlyAt = (monthly: number): number => {
+    const sim = calculateCompounding(
+      { ...config, monthlyContribution: monthly, years },
+      portfolioYield, portfolioDividendGrowth, portfolioPriceGrowth
+    );
+    const last = sim[sim.length - 1];
+    return (last.annualDividends * (1 - config.dividendTaxRate)) / 12;
+  };
+
+  let lo = 0;
+  let hi = 50_000_000; // 월 5천만원까지 탐색
+  if (netMonthlyAt(hi) < targetNetMonthly) return null;
+  if (netMonthlyAt(lo) >= targetNetMonthly) return 0;
+  for (let i = 0; i < 40; i++) {
+    const mid = (lo + hi) / 2;
+    if (netMonthlyAt(mid) >= targetNetMonthly) hi = mid;
+    else lo = mid;
+  }
+  return Math.ceil(hi / 10000) * 10000; // 만원 단위 올림
+}
+
+export interface RetirementYearData {
+  year: number;             // 은퇴 후 경과 연수
+  portfolioValue: number;
+  netMonthlyDividend: number;
+  realNetMonthlyDividend: number; // 물가 반영 실질 구매력
+}
+
+/**
+ * 인출기 시뮬레이션: 적립을 멈추고 배당을 전액 생활비로 쓰는 기간.
+ * 자산은 주가상승률로, 수익률은 배당성장률/주가상승률의 상대비로 변화.
+ */
+export function simulateRetirementPhase(
+  startValue: number,
+  startYield: number,
+  dividendGrowth: number,
+  priceGrowth: number,
+  taxRate: number,
+  years: number,
+  inflation: number = 0.02
+): RetirementYearData[] {
+  const out: RetirementYearData[] = [];
+  let value = startValue;
+  let yieldNow = startYield;
+  for (let y = 0; y <= years; y++) {
+    const netMonthly = (value * yieldNow * (1 - taxRate)) / 12;
+    out.push({
+      year: y,
+      portfolioValue: Math.round(value),
+      netMonthlyDividend: Math.round(netMonthly),
+      realNetMonthlyDividend: Math.round(netMonthly / Math.pow(1 + inflation, y))
+    });
+    value = value * (1 + priceGrowth);
+    yieldNow = yieldNow * (1 + dividendGrowth) / (1 + priceGrowth);
+  }
+  return out;
 }
 
 /**

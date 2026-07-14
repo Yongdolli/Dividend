@@ -5,7 +5,8 @@ import {
   fxHandler,
   syncRecsHandler,
   refreshQuotesHandler,
-  analyzeStockHandler
+  analyzeStockHandler,
+  backtestHandler
 } from "./server/market";
 
 // Local development / self-hosted server.
@@ -20,6 +21,7 @@ async function startServer() {
   app.get("/api/sync-recs", syncRecsHandler);
   app.post("/api/refresh-quotes", refreshQuotesHandler);
   app.post("/api/analyze-stock", analyzeStockHandler);
+  app.post("/api/backtest", backtestHandler);
 
   // Serve static assets or use Vite middleware
   if (process.env.NODE_ENV !== "production") {

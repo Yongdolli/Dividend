@@ -171,6 +171,7 @@ export default function DividendRecommendations({ onAddStock, onAddMultipleStock
       ticker: rec.ticker,
       name: rec.name,
       currentPrice: rec.currentPrice,
+      purchasePrice: rec.currentPrice, // 담는 시점의 현재가를 매수 평단가 기본값으로
       currency: rec.currency,
       dividendYield: rec.dividendYield,
       payoutRatio: rec.payoutRatio ?? 0,

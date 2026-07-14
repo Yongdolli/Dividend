@@ -15,6 +15,8 @@ export interface Stock {
   pros: string[];
   cons: string[];
   sharesOwned: number;
+  /** 주당 매수 평단가 (종목 통화 기준). 미입력 시 현재가로 간주 */
+  purchasePrice?: number;
   historicalDividends?: { year: string; amount: number }[];
   cagrBreakdown?: { period: string; rate: number }[];
   /** Real ex-dividend months (0-11) from the last 12 months of market data */

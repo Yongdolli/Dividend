@@ -5,17 +5,22 @@ import { calculatePortfolioMetrics, setFxRates } from "./utils";
 import CompoundingSimulator from "./components/CompoundingSimulator";
 import PortfolioPlanner from "./components/PortfolioPlanner";
 import StockAnalyzer from "./components/StockAnalyzer";
-import { 
-  Calculator, 
-  Briefcase, 
-  Sparkles, 
-  TrendingUp, 
+import BacktestPanel from "./components/BacktestPanel";
+import RetirementPlanner from "./components/RetirementPlanner";
+import CloudSync from "./components/CloudSync";
+import {
+  Calculator,
+  Briefcase,
+  Sparkles,
+  TrendingUp,
   RefreshCw,
-  Coins
+  Coins,
+  History,
+  Target
 } from "lucide-react";
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<"compounding" | "portfolio" | "analyzer">("compounding");
+  const [activeTab, setActiveTab] = useState<"compounding" | "backtest" | "retirement" | "portfolio" | "analyzer">("compounding");
   
   // Load stocks state with localStorage fallback
   const [stocks, setStocks] = useState<Stock[]>(() => {
@@ -130,7 +135,7 @@ export default function App() {
   };
 
   // Dynamically calculate the active parameters from portfolio to feed the Compounding Simulator
-  const { weightedYield, weightedGrowthRate } = useMemo(() => {
+  const { weightedYield, weightedGrowthRate, totalValueKRW } = useMemo(() => {
     return calculatePortfolioMetrics(stocks);
   }, [stocks]);
 
@@ -159,6 +164,12 @@ export default function App() {
           </div>
 
           <div className="flex items-center space-x-3">
+            <CloudSync
+              stocks={stocks}
+              config={config}
+              setStocks={setStocks}
+              setConfig={setConfig}
+            />
             <button
               onClick={handleReset}
               className="flex items-center gap-1 px-3 py-1.5 border border-slate-200 hover:bg-slate-50 text-xs font-semibold text-slate-500 rounded-lg transition"
@@ -167,7 +178,7 @@ export default function App() {
               포트폴리오 초기화
             </button>
             <div className="bg-slate-100 text-slate-500 text-[10px] font-mono font-bold px-2 py-1 rounded-md">
-              v2.0 Live Market Data
+              v2.1 Live Market Data
             </div>
           </div>
         </div>
@@ -189,7 +200,31 @@ export default function App() {
             <Calculator className="w-4 h-4" />
             배당 복리 계산기
           </button>
-          
+
+          <button
+            onClick={() => setActiveTab("backtest")}
+            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+              activeTab === "backtest"
+                ? "border-indigo-600 text-indigo-600"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <History className="w-4 h-4" />
+            백테스트
+          </button>
+
+          <button
+            onClick={() => setActiveTab("retirement")}
+            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+              activeTab === "retirement"
+                ? "border-indigo-600 text-indigo-600"
+                : "border-transparent text-slate-400 hover:text-slate-600"
+            }`}
+          >
+            <Target className="w-4 h-4" />
+            은퇴 설계
+          </button>
+
           <button
             onClick={() => setActiveTab("portfolio")}
             className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
@@ -224,6 +259,22 @@ export default function App() {
               portfolioYield={activeYield}
               portfolioDividendGrowth={activeDivGrowth}
               portfolioPriceGrowth={activePriceGrowth}
+            />
+          )}
+
+          {activeTab === "backtest" && (
+            <BacktestPanel
+              stocks={stocks}
+              config={config}
+            />
+          )}
+
+          {activeTab === "retirement" && (
+            <RetirementPlanner
+              config={config}
+              portfolioYield={activeYield}
+              portfolioDividendGrowth={activeDivGrowth}
+              currentPortfolioValue={totalValueKRW}
             />
           )}
 

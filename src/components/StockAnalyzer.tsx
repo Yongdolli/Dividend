@@ -100,6 +100,7 @@ export default function StockAnalyzer({ onAddStock, existingTickers }: StockAnal
       ticker: analyzedStock.ticker,
       name: analyzedStock.name,
       currentPrice: analyzedStock.currentPrice,
+      purchasePrice: analyzedStock.currentPrice, // 담는 시점의 현재가를 매수 평단가 기본값으로
       currency: analyzedStock.currency || country,
       dividendYield: analyzedStock.dividendYield,
       payoutRatio: analyzedStock.payoutRatio,
