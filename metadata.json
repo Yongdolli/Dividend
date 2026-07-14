@@ -1,0 +1,6 @@
+{
+  "name": "배당 복리 재투자 플래너",
+  "description": "실시간 AI 기반 종목 분석 및 맞춤형 미래 배당 소득 복리 성장 시뮬레이션 솔루션",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

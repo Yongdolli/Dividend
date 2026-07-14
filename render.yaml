@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: dividend-compounding-planner
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Optional: enables Gemini qualitative commentary in the stock analyzer.
+      # Without it, the app still works — numbers come from Yahoo Finance and
+      # an honest auto-generated summary replaces the AI text.
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
