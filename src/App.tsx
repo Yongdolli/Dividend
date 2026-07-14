@@ -187,11 +187,11 @@ export default function App() {
       {/* Main Content Arena */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
         
-        {/* Navigation Selector Buttons */}
-        <div className="flex border-b border-slate-200">
+        {/* Navigation Selector Buttons (mobile: horizontal scroll) */}
+        <div className="flex border-b border-slate-200 overflow-x-auto scrollbar-none -mx-4 px-4 sm:mx-0 sm:px-0">
           <button
             onClick={() => setActiveTab("compounding")}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+            className={`flex items-center gap-2 px-3 sm:px-5 py-3 text-sm font-semibold border-b-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === "compounding"
                 ? "border-indigo-600 text-indigo-600"
                 : "border-transparent text-slate-400 hover:text-slate-600"
@@ -203,7 +203,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab("backtest")}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+            className={`flex items-center gap-2 px-3 sm:px-5 py-3 text-sm font-semibold border-b-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === "backtest"
                 ? "border-indigo-600 text-indigo-600"
                 : "border-transparent text-slate-400 hover:text-slate-600"
@@ -215,7 +215,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab("retirement")}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+            className={`flex items-center gap-2 px-3 sm:px-5 py-3 text-sm font-semibold border-b-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === "retirement"
                 ? "border-indigo-600 text-indigo-600"
                 : "border-transparent text-slate-400 hover:text-slate-600"
@@ -227,7 +227,7 @@ export default function App() {
 
           <button
             onClick={() => setActiveTab("portfolio")}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+            className={`flex items-center gap-2 px-3 sm:px-5 py-3 text-sm font-semibold border-b-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === "portfolio"
                 ? "border-indigo-600 text-indigo-600"
                 : "border-transparent text-slate-400 hover:text-slate-600"
@@ -239,7 +239,7 @@ export default function App() {
           
           <button
             onClick={() => setActiveTab("analyzer")}
-            className={`flex items-center gap-2 px-5 py-3 text-sm font-semibold border-b-2 transition-all ${
+            className={`flex items-center gap-2 px-3 sm:px-5 py-3 text-sm font-semibold border-b-2 transition-all whitespace-nowrap shrink-0 ${
               activeTab === "analyzer"
                 ? "border-indigo-600 text-indigo-600"
                 : "border-transparent text-slate-400 hover:text-slate-600"

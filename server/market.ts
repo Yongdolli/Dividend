@@ -892,65 +892,106 @@ export async function backtestHandler(req: HttpRequest, res: HttpResponse) {
     };
     const taxRateOf = (currency: string) => (taxByCurrency ? (currency === "KRW" ? 0.154 : 0.15) : 0);
 
-    // State
-    const shares: number[] = resolved.map(() => 0);
-    const lastPrice: number[] = resolved.map(() => 0);
-    let totalContributions = 0;
-    let cumNetDividends = 0;
-    const series: { month: string; value: number; contributions: number; cumDividends: number }[] = [];
+    // Reusable DCA + DRIP simulation over the common month window (KRW-based)
+    interface SimAsset { ticker: string; currency: string; weight: number; series: MonthlySeries }
+    const runSim = (assets: SimAsset[]) => {
+      const shares: number[] = assets.map(() => 0);
+      const lastPrice: number[] = assets.map(() => 0);
+      let totalContributions = 0;
+      let cumNetDividends = 0;
+      const series: { month: string; value: number; contributions: number; cumDividends: number }[] = [];
 
-    baseMonths.forEach((m, idx) => {
-      // 1. Contribution: initial capital on month 0, then monthly DCA — buy by weight
-      const cash = (idx === 0 ? Number(initialCapital) || 0 : 0) + (Number(monthlyContribution) || 0);
-      totalContributions += cash;
+      baseMonths.forEach((m, idx) => {
+        // 1. Contribution: initial capital on month 0, then monthly DCA — buy by weight
+        const cash = (idx === 0 ? Number(initialCapital) || 0 : 0) + (Number(monthlyContribution) || 0);
+        totalContributions += cash;
 
-      resolved.forEach((r, i) => {
-        const px = r.series.close.get(m) ?? lastPrice[i];
-        if (px > 0) lastPrice[i] = px;
-        const pxKRW = px * fxAt(m, r.currency);
-        if (cash > 0 && pxKRW > 0) {
-          shares[i] += (cash * r.weight) / pxKRW;
-        }
-        // 2. Dividends this month (per share, native) → net cash → optional DRIP
-        const dps = r.series.dividends.get(m) ?? 0;
-        if (dps > 0 && shares[i] > 0) {
-          const gross = dps * shares[i] * fxAt(m, r.currency);
-          const net = gross * (1 - taxRateOf(r.currency));
-          cumNetDividends += net;
-          if (reinvestDividends && pxKRW > 0) {
-            shares[i] += net / pxKRW;
+        assets.forEach((r, i) => {
+          const px = r.series.close.get(m) ?? lastPrice[i];
+          if (px > 0) lastPrice[i] = px;
+          const pxKRW = px * fxAt(m, r.currency);
+          if (cash > 0 && pxKRW > 0) {
+            shares[i] += (cash * r.weight) / pxKRW;
           }
-        }
+          // 2. Dividends this month (per share, native) → net cash → optional DRIP
+          const dps = r.series.dividends.get(m) ?? 0;
+          if (dps > 0 && shares[i] > 0) {
+            const gross = dps * shares[i] * fxAt(m, r.currency);
+            const net = gross * (1 - taxRateOf(r.currency));
+            cumNetDividends += net;
+            if (reinvestDividends && pxKRW > 0) {
+              shares[i] += net / pxKRW;
+            }
+          }
+        });
+
+        // 3. Mark-to-market portfolio value in KRW
+        let value = 0;
+        assets.forEach((r, i) => {
+          const px = r.series.close.get(m) ?? lastPrice[i];
+          value += shares[i] * px * fxAt(m, r.currency);
+        });
+        if (!reinvestDividends) value += cumNetDividends; // 배당을 현금으로 보유
+
+        series.push({
+          month: m,
+          value: Math.round(value),
+          contributions: Math.round(totalContributions),
+          cumDividends: Math.round(cumNetDividends)
+        });
       });
 
-      // 3. Mark-to-market portfolio value in KRW
-      let value = 0;
-      resolved.forEach((r, i) => {
-        const px = r.series.close.get(m) ?? lastPrice[i];
-        value += shares[i] * px * fxAt(m, r.currency);
-      });
-      if (!reinvestDividends) value += cumNetDividends; // 배당을 현금으로 보유
+      return { series, shares, lastPrice };
+    };
 
-      series.push({
-        month: m,
-        value: Math.round(value),
-        contributions: Math.round(totalContributions),
-        cumDividends: Math.round(cumNetDividends)
+    // 분기 간격으로 응답 축소 (마지막 포인트는 항상 포함)
+    const downsample = <T,>(arr: T[]) => arr.filter((_, i) => i % 3 === 0 || i === arr.length - 1);
+
+    const main = runSim(resolved);
+    const series = main.series;
+
+    // Benchmarks: same cashflows into a single index fund, for comparison
+    const BENCHMARKS = [
+      { label: "S&P 500 (SPY)", symbol: "SPY", currency: "USD" },
+      { label: "코스피200 (KODEX 200)", symbol: "069500.KS", currency: "KRW" }
+    ];
+    const benchmarks: { label: string; finalValue: number; totalReturnPct: number; series: { month: string; value: number }[] }[] = [];
+    const benchResults = await Promise.allSettled(
+      BENCHMARKS.map(b => getMonthlySeries(b.symbol, period1))
+    );
+    benchResults.forEach((r, i) => {
+      const b = BENCHMARKS[i];
+      if (r.status !== "fulfilled") {
+        notes.push(`${b.label} 벤치마크 데이터를 불러오지 못해 비교에서 제외했습니다.`);
+        return;
+      }
+      if (r.value.firstMonth > startMonth) {
+        notes.push(`${b.label}의 데이터가 ${r.value.firstMonth}부터라 비교에서 제외했습니다.`);
+        return;
+      }
+      const sim = runSim([{ ticker: b.symbol, currency: b.currency, weight: 1, series: r.value }]);
+      const last = sim.series[sim.series.length - 1];
+      benchmarks.push({
+        label: b.label,
+        finalValue: last.value,
+        totalReturnPct: last.contributions > 0 ? last.value / last.contributions - 1 : 0,
+        series: downsample(sim.series).map(p => ({ month: p.month, value: p.value }))
       });
     });
 
     const finalPoint = series[series.length - 1];
     const yearsActual = series.length / 12;
     const finalValue = finalPoint.value;
-    const cagr = totalContributions > 0 && yearsActual > 0.5
-      ? Math.pow(finalValue / totalContributions, 1 / yearsActual) - 1 // 납입 시점을 무시한 근사치
+    const cagr = finalPoint.contributions > 0 && yearsActual > 0.5
+      ? Math.pow(finalValue / finalPoint.contributions, 1 / yearsActual) - 1 // 납입 시점을 무시한 근사치
       : 0;
 
     res.json({
       startMonth,
       endMonth: finalPoint.month,
       notes,
-      series: series.filter((_, i) => i % 3 === 0 || i === series.length - 1), // 분기 간격으로 응답 축소
+      series: downsample(series),
+      benchmarks,
       summary: {
         finalValue,
         totalContributions: finalPoint.contributions,
@@ -963,10 +1004,10 @@ export async function backtestHandler(req: HttpRequest, res: HttpResponse) {
       holdings: resolved.map((r, i) => ({
         ticker: r.ticker,
         weight: Math.round(r.weight * 1000) / 1000,
-        finalShares: Math.round(shares[i] * 100) / 100,
-        finalValueKRW: Math.round(shares[i] * lastPrice[i] * fxAt(finalPoint.month, r.currency))
+        finalShares: Math.round(main.shares[i] * 100) / 100,
+        finalValueKRW: Math.round(main.shares[i] * main.lastPrice[i] * fxAt(finalPoint.month, r.currency))
       })),
-      assumptions: "월초 종가 일괄 매수, 배당은 배당락월에 수령·재투자, 원천징수 차감(한국 15.4%/해외 15%), 수수료·슬리피지 미반영"
+      assumptions: "월초 종가 일괄 매수, 배당은 배당락월에 수령·재투자, 원천징수 차감(한국 15.4%/해외 15%), 수수료·슬리피지 미반영. 벤치마크는 동일 현금흐름을 해당 지수 ETF 하나에만 투자한 결과"
     });
   } catch (error: any) {
     res.status(502).json({ error: error.message || "백테스트 데이터를 가져오지 못했습니다." });
@@ -1002,10 +1043,23 @@ export async function analyzeStockHandler(req: HttpRequest, res: HttpResponse) {
     });
   }
 
+  // 최근 10년 월봉 종가 (분석 화면의 주가 차트용)
+  let priceHistory: { month: string; close: number }[] = [];
+  try {
+    const p1 = new Date();
+    p1.setFullYear(p1.getFullYear() - 10);
+    p1.setDate(1);
+    const s = await getMonthlySeries(symbol, p1.toISOString().split("T")[0]);
+    priceHistory = s.months
+      .map(m => ({ month: m, close: s.close.get(m) ?? 0 }))
+      .filter(p => p.close > 0);
+  } catch { /* 차트는 선택 데이터 — 실패해도 분석은 계속 */ }
+
   const qualitative = (await generateQualitativeAnalysis(snapshot)) ?? buildAutoCommentary(snapshot);
   const safetyScore = computeSafetyScore(snapshot);
 
   res.json({
+    priceHistory,
     ticker: snapshot.displayTicker,
     name: qualitative.name || snapshot.name,
     currentPrice: snapshot.price,

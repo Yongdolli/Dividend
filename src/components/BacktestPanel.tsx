@@ -32,6 +32,7 @@ interface BacktestResult {
   endMonth: string;
   notes: string[];
   series: { month: string; value: number; contributions: number; cumDividends: number }[];
+  benchmarks?: { label: string; finalValue: number; totalReturnPct: number; series: { month: string; value: number }[] }[];
   summary: {
     finalValue: number;
     totalContributions: number;
@@ -93,12 +94,23 @@ export default function BacktestPanel({ stocks, config }: BacktestPanelProps) {
 
   const chartData = useMemo(() => {
     if (!result) return [];
-    return result.series.map(p => ({
+    const byMonth = new Map<string, any>();
+    result.series.forEach(p => byMonth.set(p.month, {
       month: p.month,
       "실제 자산 (₩)": p.value,
       "누적 원금 (₩)": p.contributions
     }));
+    // 같은 현금흐름을 지수 ETF에만 넣었을 때의 비교선
+    for (const b of result.benchmarks ?? []) {
+      b.series.forEach(p => {
+        const row = byMonth.get(p.month);
+        if (row) row[b.label] = p.value;
+      });
+    }
+    return [...byMonth.values()];
   }, [result]);
+
+  const BENCH_COLORS = ["#f59e0b", "#0ea5e9"];
 
   return (
     <div className="space-y-6" id="backtest-panel">
@@ -240,14 +252,38 @@ export default function BacktestPanel({ stocks, config }: BacktestPanelProps) {
             </div>
           </div>
 
+          {/* Benchmark comparison strip */}
+          {result.benchmarks && result.benchmarks.length > 0 && (
+            <div className="flex flex-wrap gap-3">
+              {result.benchmarks.map((b, i) => {
+                const diff = result.summary.totalReturnPct - b.totalReturnPct;
+                const win = diff >= 0;
+                return (
+                  <div key={b.label} className={`flex-1 min-w-56 rounded-2xl border p-4 ${win ? "bg-emerald-50/50 border-emerald-100" : "bg-rose-50/40 border-rose-100"}`}>
+                    <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: BENCH_COLORS[i % BENCH_COLORS.length] }} />
+                      같은 돈을 {b.label}에만 넣었다면
+                    </span>
+                    <div className="flex items-baseline justify-between mt-1.5">
+                      <span className="text-lg font-bold text-slate-800">{formatCurrency(b.finalValue)}</span>
+                      <span className={`text-xs font-extrabold font-mono ${win ? "text-emerald-600" : "text-rose-600"}`}>
+                        내 포트폴리오가 {win ? "+" : ""}{(diff * 100).toFixed(1)}%p {win ? "앞섬 🏆" : "뒤짐"}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {/* Chart */}
           <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-xs">
             <div className="pb-4 border-b border-slate-100 mb-6">
               <h3 className="font-semibold text-slate-800 text-lg flex items-center gap-1.5">
                 <TrendingUp className="w-5 h-5 text-indigo-600" />
-                실제 역사 재현 궤적
+                실제 역사 재현 궤적 — 벤치마크 비교
               </h3>
-              <p className="text-xs text-slate-400">과거 실제 종가·배당·환율로 계산된 월별 자산 흐름입니다.</p>
+              <p className="text-xs text-slate-400">과거 실제 종가·배당·환율로 계산된 월별 자산 흐름을 시장 지수와 비교합니다.</p>
             </div>
             <div className="h-80 w-full text-xs font-sans">
               <ResponsiveContainer width="100%" height="100%">
@@ -268,6 +304,17 @@ export default function BacktestPanel({ stocks, config }: BacktestPanelProps) {
                   <Legend iconType="circle" />
                   <Area name="실제 자산 (배당 재투자 포함)" type="monotone" dataKey="실제 자산 (₩)" stroke="#4f46e5" strokeWidth={2.5} fill="url(#btValue)" />
                   <Area name="누적 납입 원금" type="monotone" dataKey="누적 원금 (₩)" stroke="#64748b" strokeWidth={1.5} strokeDasharray="4 4" fillOpacity={0} />
+                  {(result.benchmarks ?? []).map((b, i) => (
+                    <Area
+                      key={b.label}
+                      name={b.label}
+                      type="monotone"
+                      dataKey={b.label}
+                      stroke={BENCH_COLORS[i % BENCH_COLORS.length]}
+                      strokeWidth={1.8}
+                      fillOpacity={0}
+                    />
+                  ))}
                 </AreaChart>
               </ResponsiveContainer>
             </div>

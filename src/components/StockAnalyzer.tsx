@@ -1,14 +1,16 @@
-import React, { useState, useEffect } from "react";
-import { 
-  ResponsiveContainer, 
-  LineChart, 
-  Line, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  BarChart, 
-  Bar 
+import React, { useState, useEffect, useMemo } from "react";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  BarChart,
+  Bar,
+  AreaChart,
+  Area
 } from "recharts";
 import { Stock } from "../types";
 import { 
@@ -39,6 +41,24 @@ export default function StockAnalyzer({ onAddStock, existingTickers }: StockAnal
   const [error, setError] = useState<string | null>(null);
   const [analyzedStock, setAnalyzedStock] = useState<any | null>(null);
   const [added, setAdded] = useState(false);
+  const [priceRange, setPriceRange] = useState<1 | 5 | 10>(5);
+
+  // 주가 차트 데이터: 선택한 기간만큼 월봉 필터링
+  const priceChartData = useMemo(() => {
+    const history: { month: string; close: number }[] = analyzedStock?.priceHistory ?? [];
+    if (history.length === 0) return [];
+    const cutoff = new Date();
+    cutoff.setFullYear(cutoff.getFullYear() - priceRange);
+    const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}`;
+    return history.filter(p => p.month >= cutoffKey);
+  }, [analyzedStock, priceRange]);
+
+  const priceRangeReturn = useMemo(() => {
+    if (priceChartData.length < 2) return null;
+    const first = priceChartData[0].close;
+    const last = priceChartData[priceChartData.length - 1].close;
+    return first > 0 ? last / first - 1 : null;
+  }, [priceChartData]);
 
   // Witty loading phrases
   const loadingPhrases = [
@@ -367,6 +387,60 @@ export default function StockAnalyzer({ onAddStock, existingTickers }: StockAnal
                 <span className="text-lg font-bold text-indigo-800 block">{analyzedStock.growthStreak}년</span>
               </div>
             </div>
+
+            {/* Price History Chart */}
+            {priceChartData.length > 1 && (
+              <div className="bg-white rounded-2xl border border-slate-100 p-5 shadow-xs space-y-3">
+                <div className="flex items-start justify-between gap-3 flex-wrap">
+                  <div>
+                    <h4 className="font-semibold text-slate-800 text-sm">주가 흐름 (월봉 종가)</h4>
+                    <p className="text-[11px] text-slate-400">
+                      최근 {priceRange}년 수익률{" "}
+                      {priceRangeReturn !== null && (
+                        <strong className={priceRangeReturn >= 0 ? "text-emerald-600" : "text-rose-600"}>
+                          {priceRangeReturn >= 0 ? "+" : ""}{(priceRangeReturn * 100).toFixed(1)}%
+                        </strong>
+                      )}
+                      <span className="text-slate-300"> (배당 제외, 시세만)</span>
+                    </p>
+                  </div>
+                  <div className="flex gap-1 bg-slate-50 border border-slate-100 p-0.5 rounded-lg text-[11px] font-bold">
+                    {([1, 5, 10] as const).map(r => (
+                      <button
+                        key={r}
+                        onClick={() => setPriceRange(r)}
+                        className={`px-2.5 py-1 rounded-md transition ${
+                          priceRange === r ? "bg-indigo-600 text-white" : "text-slate-500 hover:bg-slate-100"
+                        }`}
+                      >
+                        {r}년
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="h-52 w-full text-xs font-mono">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <AreaChart data={priceChartData} margin={{ top: 10, right: 10, left: -15, bottom: 0 }}>
+                      <defs>
+                        <linearGradient id="saPrice" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor="#4f46e5" stopOpacity={0.15} />
+                          <stop offset="95%" stopColor="#4f46e5" stopOpacity={0} />
+                        </linearGradient>
+                      </defs>
+                      <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
+                      <XAxis dataKey="month" stroke="#94a3b8" tickLine={false} minTickGap={40} />
+                      <YAxis stroke="#94a3b8" tickLine={false} domain={["auto", "auto"]} tickFormatter={(v) => Number(v).toLocaleString()} />
+                      <Tooltip
+                        formatter={(val: any) => [`${Number(val).toLocaleString()} ${analyzedStock.currency || country}`, "종가"]}
+                        contentStyle={{ backgroundColor: "#1e293b", borderColor: "#1e293b", borderRadius: "8px", color: "#f8fafc" }}
+                      />
+                      <Area type="monotone" dataKey="close" stroke="#4f46e5" strokeWidth={2} fill="url(#saPrice)" />
+                    </AreaChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
+            )}
 
             {/* Visual Historical Dividend Growth Trend Chart & CAGR Momentum */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

@@ -194,9 +194,15 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
         <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-xs">
           <span className="text-slate-400 text-xs font-semibold block">연간 배당금 총액 (세전)</span>
           <span className="text-2xl font-bold text-slate-800 mt-1 block font-sans">{formatCurrency(totalAnnualDividendKRW)}</span>
-          <span className="text-indigo-600 text-xs font-semibold mt-1 flex items-center gap-1">
-            <Coins className="w-3.5 h-3.5" /> 세후 월평균 {formatCurrency((totalAnnualDividendKRW * (1 - weightedTaxRate)) / 12)} (원천징수 {(weightedTaxRate * 100).toFixed(1)}%)
-          </span>
+          {totalAnnualDividendKRW > 20000000 ? (
+            <span className="text-amber-600 text-[11px] font-bold mt-1 flex items-center gap-1">
+              <AlertCircle className="w-3.5 h-3.5" /> 연 2,000만원 초과 — 금융소득종합과세 대상 (5월 종합소득 신고 확인)
+            </span>
+          ) : (
+            <span className="text-indigo-600 text-xs font-semibold mt-1 flex items-center gap-1">
+              <Coins className="w-3.5 h-3.5" /> 세후 월평균 {formatCurrency((totalAnnualDividendKRW * (1 - weightedTaxRate)) / 12)} (원천징수 {(weightedTaxRate * 100).toFixed(1)}%)
+            </span>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl p-5 border border-slate-100 shadow-xs">
