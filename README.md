@@ -28,18 +28,24 @@ cp .env.example .env.local
 
 키가 없어도 앱은 정상 동작합니다 — AI 해설 대신 실측 수치 기반 자동 요약이 표시됩니다.
 
-## 배포 (Render 무료 티어 권장)
+## 배포 (Vercel 무료 티어 권장 — 잠들지 않음)
+
+이 앱은 Vercel에 맞게 구성되어 있습니다. 화면은 CDN 정적 파일로, API 4개는 서버리스 함수(`api/` 폴더)로 배포되어 **콜드 슬립 없이** 무료로 운영됩니다.
 
 1. 이 폴더를 GitHub 저장소로 푸시:
    ```bash
    git remote add origin https://github.com/<계정>/<저장소>.git
    git push -u origin main
    ```
-2. [render.com](https://render.com) 가입 → **New → Web Service** → GitHub 저장소 연결
-3. `render.yaml`이 자동 인식됩니다 (빌드: `npm install && npm run build`, 시작: `npm start`)
-4. 환경 변수 `GEMINI_API_KEY`만 대시보드에서 입력 (선택)
+2. [vercel.com](https://vercel.com) 가입(GitHub 계정으로) → **Add New → Project** → 저장소 선택
+3. 설정은 `vercel.json`이 자동 적용되므로 그대로 **Deploy** 클릭
+4. (선택) 프로젝트 Settings → Environment Variables 에 `GEMINI_API_KEY` 입력 후 재배포
 
-무료 티어는 15분간 요청이 없으면 잠들었다가 첫 접속 시 몇십 초 걸려 깨어납니다. 개인용으로는 충분합니다.
+로컬 개발은 기존 그대로 `npm run dev` (Express 서버가 동일한 핸들러를 사용합니다).
+
+### 대안: Render
+
+`render.yaml`도 포함되어 있어 Render로도 배포할 수 있습니다. 단, 무료 티어는 15분 미사용 시 잠들었다 깨어나는 지연이 있습니다.
 
 ## API 엔드포인트
 
