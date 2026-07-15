@@ -22,7 +22,7 @@ export default async function handler(_req: any, res: any) {
   }
 
   try {
-    await import("../server/market");
+    await import("./_lib/market");
     info.marketImport = "ok";
   } catch (e: any) {
     info.marketImportError = String(e?.stack || e?.message || e);

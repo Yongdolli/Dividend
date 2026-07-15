@@ -7,7 +7,7 @@ import {
   refreshQuotesHandler,
   analyzeStockHandler,
   backtestHandler
-} from "./server/market";
+} from "./api/_lib/market";
 
 // Local development / self-hosted server.
 // On Vercel the same handlers run as serverless functions (see api/).

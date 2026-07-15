@@ -1,3 +1,3 @@
-import { backtestHandler } from "../server/market";
+import { backtestHandler } from "./_lib/market";
 
 export default backtestHandler;

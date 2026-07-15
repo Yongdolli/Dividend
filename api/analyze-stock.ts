@@ -1,3 +1,3 @@
-import { analyzeStockHandler } from "../server/market";
+import { analyzeStockHandler } from "./_lib/market";
 
 export default analyzeStockHandler;

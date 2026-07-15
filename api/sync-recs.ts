@@ -1,3 +1,3 @@
-import { syncRecsHandler } from "../server/market";
+import { syncRecsHandler } from "./_lib/market";
 
 export default syncRecsHandler;
