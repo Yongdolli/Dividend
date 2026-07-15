@@ -37,9 +37,11 @@ interface PortfolioPlannerProps {
   onRefreshQuotes: () => Promise<void>;
   isRefreshingQuotes: boolean;
   lastQuoteSync: string | null;
+  quoteFailures: string[];
+  quoteSyncError: string | null;
 }
 
-export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, isRefreshingQuotes, lastQuoteSync }: PortfolioPlannerProps) {
+export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, isRefreshingQuotes, lastQuoteSync, quoteFailures, quoteSyncError }: PortfolioPlannerProps) {
   const existingTickers = useMemo(() => {
     return stocks.map(s => s.ticker.toUpperCase());
   }, [stocks]);
@@ -146,6 +148,8 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
     };
 
     setStocks(prev => [...prev, customStock]);
+    // 새 종목 추가 직후 실시간 시세를 자동 조회해 입력값을 실제값으로 교정
+    setTimeout(() => { onRefreshQuotes().catch(() => {}); }, 400);
     setShowAddForm(false);
     setNewStock({
       ticker: "",
@@ -232,7 +236,13 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
               <h3 className="font-semibold text-slate-800 text-lg">자산 현황 및 수량 관리</h3>
               <p className="text-xs text-slate-400">
                 보유 수량을 조절하여 최적의 연간 배당 현금흐름을 연출해보세요.
-                {lastQuoteSync && <span className="block text-[10px] text-slate-400 font-mono mt-0.5">시세 업데이트: {lastQuoteSync}</span>}
+                {lastQuoteSync && <span className="block text-[10px] text-slate-400 font-mono mt-0.5">전체 종목 시세 업데이트: {lastQuoteSync} (10분마다 자동 갱신)</span>}
+                {quoteSyncError && <span className="block text-[10px] text-rose-500 font-bold mt-0.5">{quoteSyncError}</span>}
+                {quoteFailures.length > 0 && (
+                  <span className="block text-[10px] text-amber-600 font-bold mt-0.5">
+                    시세 조회 실패 종목: {quoteFailures.join(", ")} — 티커가 정확한지 확인해 주세요
+                  </span>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-2">
@@ -533,10 +543,11 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
       </div>
 
       {/* AI Recommended Rankings & Scoring Board */}
-      <DividendRecommendations 
-        onAddStock={handleAddRecommendedStock} 
+      <DividendRecommendations
+        onAddStock={handleAddRecommendedStock}
         onAddMultipleStocks={handleAddMultipleStocks}
-        existingTickers={existingTickers} 
+        existingTickers={existingTickers}
+        onSyncHoldings={onRefreshQuotes}
       />
 
       {/* Portfolio Share & Lifestyle Milestones Challenger */}

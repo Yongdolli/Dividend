@@ -56,11 +56,13 @@ interface DividendRecommendationsProps {
   onAddStock: (stock: Stock) => void;
   onAddMultipleStocks?: (stocks: Stock[]) => void;
   existingTickers: string[];
+  /** 동기화 버튼 클릭 시 보유 종목 시세도 함께 갱신 */
+  onSyncHoldings?: () => Promise<void>;
 }
 
 const RECS_CACHE_KEY = "dividend_recs_cache_v2";
 
-export default function DividendRecommendations({ onAddStock, onAddMultipleStocks, existingTickers }: DividendRecommendationsProps) {
+export default function DividendRecommendations({ onAddStock, onAddMultipleStocks, existingTickers, onSyncHoldings }: DividendRecommendationsProps) {
   // First paint from the last synced snapshot; live data replaces it right after mount
   const [recs, setRecs] = useState<RecommendedStock[]>(() => {
     try {
@@ -121,9 +123,12 @@ export default function DividendRecommendations({ onAddStock, onAddMultipleStock
     fetchRecommendations(false);
   }, []);
 
-  // Live Fact Check & Dynamic Update Handler
+  // 수동 동기화: 추천 보드와 보유 종목 시세를 한 번에 갱신
   const handleLiveFactCheck = async () => {
-    await fetchRecommendations(true);
+    await Promise.all([
+      fetchRecommendations(true),
+      onSyncHoldings ? onSyncHoldings().catch(() => {}) : Promise.resolve()
+    ]);
   };
 
   // Perform auto background sync if date changed

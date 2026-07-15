@@ -57,26 +57,42 @@ export default function App() {
     localStorage.setItem("dividend_planner_config", JSON.stringify(config));
   }, [config]);
 
-  // --- Live quote refresh (prices, yields, FX) for the holdings ---
+  // --- Live quote refresh (prices, yields, FX) for ALL held stocks ---
   const [isRefreshingQuotes, setIsRefreshingQuotes] = useState(false);
+  const [quoteFailures, setQuoteFailures] = useState<string[]>([]);
+  const [quoteSyncError, setQuoteSyncError] = useState<string | null>(null);
   const [lastQuoteSync, setLastQuoteSync] = useState<string | null>(
     () => localStorage.getItem("dividend_planner_quote_sync")
   );
   const stocksRef = useRef(stocks);
   stocksRef.current = stocks;
+  const inFlightRef = useRef(false);
+  const lastSyncAtRef = useRef(0);
 
-  const refreshQuotes = async () => {
+  const refreshQuotes = async (retries: number = 2) => {
     const holdings = stocksRef.current.map(s => ({ ticker: s.ticker, currency: s.currency }));
-    if (holdings.length === 0 || isRefreshingQuotes) return;
+    if (holdings.length === 0 || inFlightRef.current) return;
+    inFlightRef.current = true;
     setIsRefreshingQuotes(true);
     try {
-      const res = await fetch("/api/refresh-quotes", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ holdings })
-      });
-      if (!res.ok) throw new Error(`refresh-quotes ${res.status}`);
-      const result = await res.json();
+      // 서버 콜드스타트·일시 오류 대비 자동 재시도
+      let result: any = null;
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await fetch("/api/refresh-quotes", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ holdings })
+          });
+          if (!res.ok) throw new Error(`refresh-quotes ${res.status}`);
+          result = await res.json();
+          break;
+        } catch (e) {
+          if (attempt >= retries) throw e;
+          await new Promise(r => setTimeout(r, 3000));
+        }
+      }
+
       if (result.fxRates) setFxRates(result.fxRates);
       if (result.quotes) {
         setStocks(prev => prev.map(stock => {
@@ -95,19 +111,37 @@ export default function App() {
           };
         }));
       }
+      setQuoteFailures(Array.isArray(result.failures) ? result.failures : []);
+      setQuoteSyncError(null);
       const syncTime = result.asOf || new Date().toLocaleString("ko-KR", { hour12: false });
       setLastQuoteSync(syncTime);
+      lastSyncAtRef.current = Date.now();
       localStorage.setItem("dividend_planner_quote_sync", syncTime);
     } catch (e) {
       console.error("Failed to refresh live quotes:", e);
+      setQuoteSyncError("시세 서버에 연결하지 못했습니다. 잠시 후 자동으로 다시 시도합니다.");
     } finally {
+      inFlightRef.current = false;
       setIsRefreshingQuotes(false);
     }
   };
 
-  // Refresh once on load so saved portfolios never show stale prices
+  // 항상 최신 시세 유지: 로드 시 1회 + 탭 복귀 시(5분 경과) + 10분 주기
   useEffect(() => {
     refreshQuotes();
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && Date.now() - lastSyncAtRef.current > 5 * 60 * 1000) {
+        refreshQuotes();
+      }
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    const interval = setInterval(() => {
+      if (document.visibilityState === "visible") refreshQuotes();
+    }, 10 * 60 * 1000);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisible);
+      clearInterval(interval);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -285,6 +319,8 @@ export default function App() {
               onRefreshQuotes={refreshQuotes}
               isRefreshingQuotes={isRefreshingQuotes}
               lastQuoteSync={lastQuoteSync}
+              quoteFailures={quoteFailures}
+              quoteSyncError={quoteSyncError}
             />
           )}
 
