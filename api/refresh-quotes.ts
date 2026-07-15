@@ -1,3 +1,3 @@
-import { refreshQuotesHandler } from "./_lib/market";
+import { refreshQuotesHandler } from "./_lib/market.js";
 
 export default refreshQuotesHandler;
