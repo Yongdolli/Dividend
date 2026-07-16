@@ -21,6 +21,14 @@ export interface Stock {
   cagrBreakdown?: { period: string; rate: number }[];
   /** Real ex-dividend months (0-11) from the last 12 months of market data */
   payoutMonths?: number[];
+  /** GICS 섹터 (ETF/펀드는 null) — 시세 동기화 시 갱신 */
+  sector?: string | null;
+  /** EQUITY | ETF | MUTUALFUND 등 */
+  quoteType?: string | null;
+  /** 다음(또는 최근 공시된) 배당락일 YYYY-MM-DD */
+  nextExDividendDate?: string | null;
+  /** 배당 지급(예정)일 YYYY-MM-DD */
+  nextDividendDate?: string | null;
 }
 
 export interface SimulationConfig {

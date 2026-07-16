@@ -65,6 +65,16 @@ interface MarketSnapshot {
     revenueGrowthYoY: number | null;
     earningsGrowthYoY: number | null;
   };
+  sector: string | null;              // GICS 섹터 (ETF/펀드는 null)
+  quoteType: string | null;           // EQUITY | ETF | MUTUALFUND ...
+  nextExDividendDate: string | null;  // 다음(또는 최근 공시된) 배당락일 YYYY-MM-DD
+  nextDividendDate: string | null;    // 배당 지급(예정)일 YYYY-MM-DD
+}
+
+function toIsoDate(v: any): string | null {
+  if (!v) return null;
+  const d = v instanceof Date ? v : typeof v === "number" ? new Date(v * 1000) : new Date(v);
+  return isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
 }
 
 // ---------------------------------------------------------------------------
@@ -279,8 +289,12 @@ async function getMarketSnapshot(symbol: string, force = false): Promise<MarketS
 
   const stats = computeDividendStats(events, price);
 
-  // Fundamentals (stocks only; ETFs/funds usually have none — left as null)
+  // Fundamentals, sector and upcoming dividend dates
+  // (stocks only for fundamentals; ETFs/funds usually have none — left as null)
   let payoutRatio: number | null = null;
+  let sector: string | null = null;
+  let nextExDividendDate: string | null = null;
+  let nextDividendDate: string | null = null;
   const fundamentals: MarketSnapshot["fundamentals"] = {
     operatingMargin: null,
     debtToEquity: null,
@@ -290,7 +304,7 @@ async function getMarketSnapshot(symbol: string, force = false): Promise<MarketS
   };
   try {
     const summary = await yf.quoteSummary(symbol, {
-      modules: ["summaryDetail", "financialData"]
+      modules: ["summaryDetail", "financialData", "assetProfile", "calendarEvents"]
     });
     const sd: any = summary.summaryDetail ?? {};
     const fd: any = summary.financialData ?? {};
@@ -302,6 +316,12 @@ async function getMarketSnapshot(symbol: string, force = false): Promise<MarketS
     if (typeof fd.returnOnEquity === "number") fundamentals.roe = fd.returnOnEquity;
     if (typeof fd.revenueGrowth === "number") fundamentals.revenueGrowthYoY = fd.revenueGrowth;
     if (typeof fd.earningsGrowth === "number") fundamentals.earningsGrowthYoY = fd.earningsGrowth;
+
+    const ap: any = summary.assetProfile ?? {};
+    if (typeof ap.sector === "string" && ap.sector) sector = ap.sector;
+    const ce: any = summary.calendarEvents ?? {};
+    nextExDividendDate = toIsoDate(ce.exDividendDate);
+    nextDividendDate = toIsoDate(ce.dividendDate);
   } catch {
     // quoteSummary is optional enrichment
   }
@@ -330,6 +350,10 @@ async function getMarketSnapshot(symbol: string, force = false): Promise<MarketS
     marketTime,
     payoutRatio,
     fundamentals,
+    sector,
+    quoteType: (quote as any).quoteType ?? null,
+    nextExDividendDate,
+    nextDividendDate,
     ...stats
   };
 
@@ -728,7 +752,11 @@ export async function refreshQuotesHandler(req: HttpRequest, res: HttpResponse) 
         dividendGrowthRate: snap.dividendGrowthRate,
         payoutFrequency: snap.payoutFrequency,
         payoutMonths: snap.payoutMonths,
-        marketTime: snap.marketTime
+        marketTime: snap.marketTime,
+        sector: snap.sector,
+        quoteType: snap.quoteType,
+        nextExDividendDate: snap.nextExDividendDate,
+        nextDividendDate: snap.nextDividendDate
       };
     } else {
       failures.push(holdings[i].ticker);

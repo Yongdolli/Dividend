@@ -1,13 +1,16 @@
 import React, { useMemo, useState } from "react";
-import { 
-  ResponsiveContainer, 
-  BarChart, 
-  Bar, 
-  XAxis, 
-  YAxis, 
-  CartesianGrid, 
-  Tooltip, 
-  Cell 
+import {
+  ResponsiveContainer,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Cell,
+  PieChart as RPieChart,
+  Pie,
+  Legend
 } from "recharts";
 import { Stock } from "../types";
 import {
@@ -95,6 +98,68 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
   const monthlyCalendar = useMemo(() => {
     return calculatePayoutCalendar(stocks);
   }, [stocks]);
+
+  // 다가오는 배당 일정 (오늘 ~ 45일 이내, 배당락일·지급일 실제 공시 기준)
+  const upcomingDividends = useMemo(() => {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const limit = new Date(today);
+    limit.setDate(limit.getDate() + 45);
+    const items: { key: string; ticker: string; kind: "배당락" | "지급"; date: Date; dDay: number }[] = [];
+    const push = (s: Stock, kind: "배당락" | "지급", iso?: string | null) => {
+      if (!iso) return;
+      const d = new Date(`${iso}T00:00:00`);
+      if (isNaN(d.getTime()) || d < today || d > limit) return;
+      items.push({
+        key: `${s.id}-${kind}`,
+        ticker: s.ticker,
+        kind,
+        date: d,
+        dDay: Math.round((d.getTime() - today.getTime()) / 86400000)
+      });
+    };
+    stocks.forEach(s => {
+      push(s, "배당락", s.nextExDividendDate);
+      push(s, "지급", s.nextDividendDate);
+    });
+    return items.sort((a, b) => a.date.getTime() - b.date.getTime());
+  }, [stocks]);
+
+  // 섹터 분산 진단 (실제 GICS 섹터 기반, ETF/펀드는 별도 분류)
+  const SECTOR_KO: Record<string, string> = {
+    "Technology": "기술",
+    "Financial Services": "금융",
+    "Consumer Defensive": "필수소비재",
+    "Consumer Cyclical": "임의소비재",
+    "Real Estate": "리츠/부동산",
+    "Healthcare": "헬스케어",
+    "Energy": "에너지",
+    "Industrials": "산업재",
+    "Utilities": "유틸리티",
+    "Communication Services": "통신/미디어",
+    "Basic Materials": "소재"
+  };
+  const sectorBreakdown = useMemo(() => {
+    const map = new Map<string, number>();
+    stocks.forEach(s => {
+      const isFund = s.quoteType === "ETF" || s.quoteType === "MUTUALFUND";
+      const label = isFund ? "ETF/펀드 (자체 분산)" : s.sector ? (SECTOR_KO[s.sector] ?? s.sector) : "미분류";
+      map.set(label, (map.get(label) ?? 0) + s.sharesOwned * toKRW(s.currentPrice, s.currency));
+    });
+    return [...map.entries()]
+      .map(([name, value]) => ({ name, value: Math.round(value) }))
+      .filter(x => x.value > 0)
+      .sort((a, b) => b.value - a.value);
+  }, [stocks]);
+
+  const SECTOR_COLORS = ["#4f46e5", "#10b981", "#f59e0b", "#0ea5e9", "#8b5cf6", "#ef4444", "#14b8a6", "#f97316", "#64748b", "#ec4899"];
+  const topConcentration = useMemo(() => {
+    if (totalValueKRW <= 0 || sectorBreakdown.length === 0) return null;
+    // ETF/펀드는 내부적으로 분산되어 있으므로 집중 경고 대상에서 제외
+    const topSingle = sectorBreakdown.find(x => x.name !== "ETF/펀드 (자체 분산)");
+    if (!topSingle) return null;
+    return { name: topSingle.name, pct: topSingle.value / totalValueKRW };
+  }, [sectorBreakdown, totalValueKRW]);
 
   // Total shares sum
   const totalSharesCount = useMemo(() => {
@@ -493,10 +558,36 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
 
         {/* Monthly Dividend Payout Calendar (Visualized) */}
         <div className="lg:col-span-5 bg-white rounded-2xl border border-slate-100 p-6 shadow-xs flex flex-col justify-between">
-          <div className="space-y-1 pb-4 border-b border-slate-100 mb-6">
+          <div className="space-y-1 pb-4 border-b border-slate-100 mb-4">
             <h3 className="font-semibold text-slate-800 text-lg">월별 배당 수령 캘린더</h3>
             <p className="text-xs text-slate-400">연중 배당 분산을 계획하여 제2의 매월 연금 월급날을 완성합니다.</p>
           </div>
+
+          {/* 다가오는 배당 일정 (실제 공시 기준) */}
+          {upcomingDividends.length > 0 && (
+            <div className="mb-4 space-y-1.5">
+              <span className="text-[11px] font-bold text-slate-500 flex items-center gap-1">
+                <Clock className="w-3.5 h-3.5 text-indigo-500" />
+                다가오는 배당 일정 (배당락 전날까지 매수해야 해당 회차 배당 수령)
+              </span>
+              <div className="flex flex-wrap gap-1.5">
+                {upcomingDividends.map(item => (
+                  <span
+                    key={item.key}
+                    className={`text-[11px] font-mono font-bold px-2 py-1 rounded-lg border ${
+                      item.kind === "배당락"
+                        ? item.dDay <= 7
+                          ? "bg-indigo-50 text-indigo-700 border-indigo-200"
+                          : "bg-slate-50 text-slate-600 border-slate-150"
+                        : "bg-emerald-50 text-emerald-700 border-emerald-100"
+                    }`}
+                  >
+                    {item.dDay === 0 ? "D-Day" : `D-${item.dDay}`} · {item.ticker} {item.kind} {item.date.getMonth() + 1}/{item.date.getDate()}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="h-64 w-full text-xs font-mono mb-4">
             {totalSharesCount === 0 ? (
@@ -541,6 +632,85 @@ export default function PortfolioPlanner({ stocks, setStocks, onRefreshQuotes, i
           </div>
         </div>
       </div>
+
+      {/* Sector Diversification Diagnosis (real GICS sector data) */}
+      {stocks.length > 0 && sectorBreakdown.length > 0 && (
+        <div className="bg-white rounded-2xl border border-slate-100 p-6 shadow-xs space-y-4">
+          <div className="pb-4 border-b border-slate-100">
+            <h3 className="font-semibold text-slate-800 text-lg flex items-center gap-1.5 font-display">
+              <TrendingUp className="w-5 h-5 text-indigo-600" />
+              섹터 분산 진단
+            </h3>
+            <p className="text-xs text-slate-400">
+              실제 섹터 데이터 기준으로 포트폴리오 쏠림을 진단합니다. 시세 동기화 시 자동 갱신됩니다.
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+            {/* Pie chart */}
+            <div className="h-64 w-full text-xs">
+              <ResponsiveContainer width="100%" height="100%">
+                <RPieChart>
+                  <Pie
+                    data={sectorBreakdown}
+                    dataKey="value"
+                    nameKey="name"
+                    innerRadius="52%"
+                    outerRadius="80%"
+                    paddingAngle={2}
+                    strokeWidth={0}
+                  >
+                    {sectorBreakdown.map((entry, i) => (
+                      <Cell key={entry.name} fill={SECTOR_COLORS[i % SECTOR_COLORS.length]} />
+                    ))}
+                  </Pie>
+                  <Tooltip
+                    formatter={(value: any, name: any) => [formatCurrency(Number(value)), name]}
+                    contentStyle={{ backgroundColor: "#1e293b", borderColor: "#1e293b", borderRadius: "10px", color: "#f8fafc" }}
+                  />
+                </RPieChart>
+              </ResponsiveContainer>
+            </div>
+
+            {/* Breakdown bars + verdict */}
+            <div className="space-y-3">
+              <div className="space-y-2">
+                {sectorBreakdown.map((s, i) => {
+                  const pct = totalValueKRW > 0 ? (s.value / totalValueKRW) * 100 : 0;
+                  return (
+                    <div key={s.name} className="space-y-0.5">
+                      <div className="flex justify-between text-[11px] font-medium text-slate-600">
+                        <span className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: SECTOR_COLORS[i % SECTOR_COLORS.length] }} />
+                          {s.name}
+                        </span>
+                        <span className="font-bold font-mono text-slate-700">{pct.toFixed(1)}%</span>
+                      </div>
+                      <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+                        <div className="h-full rounded-full" style={{ width: `${pct}%`, backgroundColor: SECTOR_COLORS[i % SECTOR_COLORS.length] }} />
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {topConcentration && (
+                <div className={`rounded-xl p-3 text-[11px] leading-relaxed border ${
+                  topConcentration.pct > 0.4
+                    ? "bg-amber-50 border-amber-100 text-amber-800"
+                    : "bg-emerald-50/50 border-emerald-100 text-emerald-800"
+                }`}>
+                  {topConcentration.pct > 0.4 ? (
+                    <><strong>{topConcentration.name}</strong> 섹터 비중이 <strong>{(topConcentration.pct * 100).toFixed(0)}%</strong>로 높습니다. 해당 섹터가 흔들리면 배당과 자산이 같이 흔들릴 수 있으니, 다른 섹터의 배당주로 분산을 검토해 보세요.</>
+                  ) : (
+                    <>단일 섹터 최대 비중이 <strong>{(topConcentration.pct * 100).toFixed(0)}%</strong>({topConcentration.name})로 무난한 분산 상태입니다.</>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* AI Recommended Rankings & Scoring Board */}
       <DividendRecommendations

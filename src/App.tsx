@@ -107,7 +107,11 @@ export default function App() {
               ? q.dividendGrowthRate : stock.dividendGrowthRate,
             payoutFrequency: q.payoutFrequency || stock.payoutFrequency,
             payoutMonths: Array.isArray(q.payoutMonths) && q.payoutMonths.length > 0
-              ? q.payoutMonths : stock.payoutMonths
+              ? q.payoutMonths : stock.payoutMonths,
+            sector: q.sector !== undefined ? q.sector : stock.sector,
+            quoteType: q.quoteType !== undefined ? q.quoteType : stock.quoteType,
+            nextExDividendDate: q.nextExDividendDate !== undefined ? q.nextExDividendDate : stock.nextExDividendDate,
+            nextDividendDate: q.nextDividendDate !== undefined ? q.nextDividendDate : stock.nextDividendDate
           };
         }));
       }
